@@ -39,6 +39,11 @@ import static org.apache.flink.runtime.checkpoint.CheckpointFailureReason.MINIMU
 import static org.apache.flink.runtime.checkpoint.CheckpointFailureReason.TOO_MANY_CHECKPOINT_REQUESTS;
 
 /**
+ * 决定是否应执行、删除或推迟checkpoint request 。丢弃的请求会立即失败。推迟的请求被排入队列，稍后可以出队。
+ * 决定是根据：
+ * 检查点属性（例如 isForce、isPeriodic）
+ * 检查点配置（例如最大并发检查点、最小暂停）
+ * 当前状态（其他排队的请求、挂起的检查点、最后一个检查点完成时间）
  * Decides whether a {@link CheckpointCoordinator.CheckpointTriggerRequest checkpoint request}
  * should be executed, dropped or postponed. Dropped requests are failed immediately. Postponed
  * requests are enqueued into a queue and can be dequeued later.
@@ -154,7 +159,7 @@ class CheckpointRequestDecider {
         if (isTriggering
                 || queuedRequests.isEmpty()
                 || numberOfCleaningCheckpointsSupplier.getAsInt()
-                        > maxConcurrentCheckpointAttempts) {
+                > maxConcurrentCheckpointAttempts) {
             return Optional.empty();
         }
         if (pendingCheckpointsSizeSupplier.getAsInt() >= maxConcurrentCheckpointAttempts) {

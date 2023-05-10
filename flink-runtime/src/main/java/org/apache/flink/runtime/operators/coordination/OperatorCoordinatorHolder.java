@@ -44,6 +44,28 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
+ * zh_cn： OperatorCoordinatorHolder持有OperatorCoordinator并管理它与其余组件的所有交互。它提供上下文并负责检查点和恰好一次语义。
+ * 正好一语义
+ * 语义在OperatorCoordinator.checkpointCoordinator(long, CompletableFuture)下描述。
+ * Exactly-one 机制
+ * 此实现可以处理一次触发一个检查点。如果在第一个检查点的触发未完成或中止时触发另一个检查点，则此类将抛出异常。这符合 Checkpoint Coordinator 的能力，它可以处理 TaskManager 上的多个并发检查点，但只能处理一个并发触发阶段。
+ * exactly once语义的机制如下：
+ * 事件通过特殊通道OperatorEventValve传递。如果我们当前没有触发检查点，那么事件就会简单地通过。
+ * 随着协调器未来检查点的完成，该操作员事件阀关闭。之后发生的事件被阻止（缓冲），因为它们属于检查点之后的纪元。
+ * 一旦作业中的所有协调器都完成了检查点，就会注入源的障碍。之后（参见afterSourceBarrierInjection(long) ）阀门再次打开并发送事件。
+ * 如果同时任务失败，则事件将从阀门中删除。从协调器的角度来看，这些事件丢失了，因为它们在最新的完整检查点之后被发送到失败的子任务。
+ * 重要提示：一个关键的假设是从调度程序到任务的所有事件都严格按顺序传输。注入检查点屏障后从协调器发送的事件不得超越检查点屏障。目前这是通过 Flink 的 RPC 机制来保证的。
+ * 考虑这个例子：
+ * Coordinator one events: => a . . b . |trigger| . . |complete| . . c . . d . |barrier| . e . f
+ * Coordinator two events: => . . x . . |trigger| . . . . . . . . . .|complete||barrier| . . y . . z
+ * <p>
+ * 两个协调器同时触发检查点。 “协调员二”需要更长的时间才能完成，同时“协调员一号”发送更多事件。
+ * “协调器一号”在完成其检查点后发出事件“c”和“d”，这意味着事件必须在检查点之后发生。但它们在屏障注入之前，这意味着如果立即传输它们，运行时任务将在检查点之前看到它们。
+ * 一旦未来检查点完成，“协调员一号”就会关闭其阀门。事件“c”和“d”被阻止在阀门中。一旦“Coordinator Two”完成其检查点，barrier 就会被发送到 sources。然后阀门打开，事件“c”和“d”可以流向屏障后接收它们的任务。
+ * 并发和线程模型
+ * 该组件严格运行在调度器的主线程执行器中。所有“来自外部”的调用要么已经在主线程执行器中（当来自调度程序时），要么已放入主线程执行器（当来自检查点协调器时）。我们依靠执行者来保持调用的严格顺序。
+ * 从协调器到“外部世界”的操作（如完成检查点和发送事件）也严格按顺序排回调度程序主线程执行器。
+ * <p>
  * The {@code OperatorCoordinatorHolder} holds the {@link OperatorCoordinator} and manages all its
  * interactions with the remaining components. It provides the context and is responsible for
  * checkpointing and exactly once semantics.

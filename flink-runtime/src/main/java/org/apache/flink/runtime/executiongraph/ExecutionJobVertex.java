@@ -91,19 +91,24 @@ public class ExecutionJobVertex
 
     private final JobVertex jobVertex;
 
-    @Nullable private ExecutionVertex[] taskVertices;
+    @Nullable
+    private ExecutionVertex[] taskVertices;
 
-    @Nullable private IntermediateResult[] producedDataSets;
+    @Nullable
+    private IntermediateResult[] producedDataSets;
 
-    @Nullable private List<IntermediateResult> inputs;
+    @Nullable
+    private List<IntermediateResult> inputs;
 
     private final VertexParallelismInformation parallelismInfo;
 
     private final SlotSharingGroup slotSharingGroup;
 
-    @Nullable private final CoLocationGroup coLocationGroup;
+    @Nullable
+    private final CoLocationGroup coLocationGroup;
 
-    @Nullable private InputSplit[] inputSplits;
+    @Nullable
+    private InputSplit[] inputSplits;
 
     private final ResourceProfile resourceProfile;
 
@@ -117,9 +122,11 @@ public class ExecutionJobVertex
     private Either<SerializedValue<TaskInformation>, PermanentBlobKey> taskInformationOrBlobKey =
             null;
 
-    @Nullable private Collection<OperatorCoordinatorHolder> operatorCoordinators;
+    @Nullable
+    private Collection<OperatorCoordinatorHolder> operatorCoordinators;
 
-    @Nullable private InputSplitAssigner splitAssigner;
+    @Nullable
+    private InputSplitAssigner splitAssigner;
 
     @VisibleForTesting
     public ExecutionJobVertex(
@@ -364,7 +371,11 @@ public class ExecutionJobVertex
         return inputs;
     }
 
+    /**
+     * @return
+     */
     public Collection<OperatorCoordinatorHolder> getOperatorCoordinators() {
+        // executionJobVertex（节点） 必须初始化完才能返回对应operator 的coordinators 上下文信息
         checkState(isInitialized());
         return operatorCoordinators;
     }
@@ -565,8 +576,9 @@ public class ExecutionJobVertex
      * on.
      *
      * @param verticesPerState The number of vertices in each state (indexed by the ordinal of the
-     *     ExecutionState values).
+     *         ExecutionState values).
      * @param parallelism The parallelism of the ExecutionJobVertex
+     *
      * @return The aggregate state of this ExecutionJobVertex.
      */
     public static ExecutionState getAggregateJobVertexState(

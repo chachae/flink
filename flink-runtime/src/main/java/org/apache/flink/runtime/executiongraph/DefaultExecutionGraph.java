@@ -137,7 +137,9 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
     private final CoordinatorStore coordinatorStore = new CoordinatorStoreImpl();
 
     /** Executor that runs tasks in the job manager's main thread. */
-    @Nonnull private ComponentMainThreadExecutor jobMasterMainThreadExecutor;
+    // jm 主线程池（ScheduledExecutor）
+    @Nonnull
+    private ComponentMainThreadExecutor jobMasterMainThreadExecutor;
 
     /** {@code true} if all source tasks are stoppable. */
     private boolean isStoppable = true;
@@ -189,7 +191,8 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
 
     private DefaultExecutionTopology executionTopology;
 
-    @Nullable private InternalFailuresListener internalTaskFailuresListener;
+    @Nullable
+    private InternalFailuresListener internalTaskFailuresListener;
 
     /** Counts all restarts. Used by other Gauges/Meters and does not register to metric group. */
     private final Counter numberOfRestartsCounter = new SimpleCounter();
@@ -232,7 +235,8 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
     private final ResultPartitionAvailabilityChecker resultPartitionAvailabilityChecker;
 
     /** Future for an ongoing or completed scheduling action. */
-    @Nullable private CompletableFuture<Void> schedulingFuture;
+    @Nullable
+    private CompletableFuture<Void> schedulingFuture;
 
     private final VertexAttemptNumberStore initialAttemptCounts;
 
@@ -241,13 +245,16 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
     // ------ Fields that are relevant to the execution and need to be cleared before archiving
     // -------
 
-    @Nullable private CheckpointCoordinatorConfiguration checkpointCoordinatorConfiguration;
+    @Nullable
+    private CheckpointCoordinatorConfiguration checkpointCoordinatorConfiguration;
 
     /** The coordinator for checkpoints, if snapshot checkpoints are enabled. */
-    @Nullable private CheckpointCoordinator checkpointCoordinator;
+    @Nullable
+    private CheckpointCoordinator checkpointCoordinator;
 
     /** TODO, replace it with main thread executor. */
-    @Nullable private ScheduledExecutorService checkpointCoordinatorTimer;
+    @Nullable
+    private ScheduledExecutorService checkpointCoordinatorTimer;
 
     /**
      * Checkpoint stats tracker separate from the coordinator in order to be available after
@@ -256,9 +263,11 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
     private CheckpointStatsTracker checkpointStatsTracker;
 
     // ------ Fields that are only relevant for archived execution graphs ------------
-    @Nullable private String stateBackendName;
+    @Nullable
+    private String stateBackendName;
 
-    @Nullable private String checkpointStorageName;
+    @Nullable
+    private String checkpointStorageName;
 
     private String jsonPlan;
 
@@ -380,7 +389,7 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
 
     @Override
     public TaskDeploymentDescriptorFactory.PartitionLocationConstraint
-            getPartitionLocationConstraint() {
+    getPartitionLocationConstraint() {
         return partitionLocationConstraint;
     }
 
@@ -411,31 +420,42 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
             CheckpointStatsTracker statsTracker,
             CheckpointsCleaner checkpointsCleaner) {
 
+        // 状态必须为[create] 下才能够触发初始化
         checkState(state == JobStatus.CREATED, "Job must be in CREATED state");
+        // Coordinator 必须为空才能够初始化
         checkState(checkpointCoordinator == null, "checkpointing already enabled");
 
+        // 获取整个executiongraph 下每个节点的CheckpointContext 集合
         final Collection<OperatorCoordinatorCheckpointContext> operatorCoordinators =
                 buildOpCoordinatorCheckpointContexts();
 
+        // 校验checkpoint tracker （用作埋点、统计checkpoint 的summary信息）
         checkpointStatsTracker = checkNotNull(statsTracker, "CheckpointStatsTracker");
+        // 判断checkpoint config 是否为空
         checkpointCoordinatorConfiguration =
                 checkNotNull(chkConfig, "CheckpointCoordinatorConfiguration");
 
+        // 构建checkpoint 失败的manager，具体会对我们外部定义好的checkpoint 配置予以实现
         CheckpointFailureManager failureManager =
                 new CheckpointFailureManager(
+                        // 允许失败次数
                         chkConfig.getTolerableCheckpointFailureNumber(),
+                        // 失败回调
                         new CheckpointFailureManager.FailJobCallback() {
                             @Override
                             public void failJob(Throwable cause) {
+                                // jm 主线程池执行failGlobal 方法
                                 getJobMasterMainThreadExecutor().execute(() -> failGlobal(cause));
                             }
 
+                            // 【任务失败】导致作业失败
                             @Override
                             public void failJobDueToTaskFailure(
                                     Throwable cause, ExecutionAttemptID failingTask) {
                                 getJobMasterMainThreadExecutor()
                                         .execute(
                                                 () ->
+                                                        // // jm 主线程池执行failGlobalIfExecutionIsStillRunning 方法
                                                         failGlobalIfExecutionIsStillRunning(
                                                                 cause, failingTask));
                             }
@@ -444,11 +464,14 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
         checkState(checkpointCoordinatorTimer == null);
 
         checkpointCoordinatorTimer =
+                // Checkpoint Timer 线程池
                 Executors.newSingleThreadScheduledExecutor(
                         new DispatcherThreadFactory(
                                 Thread.currentThread().getThreadGroup(), "Checkpoint Timer"));
 
+        // ----------------------------------- 【核心：checkpointCoordinator 初始化流程】-----------------------------------
         // create the coordinator that triggers and commits checkpoints and holds the state
+        // //创建checkpointCoordinator，这里的checkpointCoordinator不管有没有设置checkpoint都会创建
         checkpointCoordinator =
                 new CheckpointCoordinator(
                         jobInformation.getJobId(),
@@ -466,6 +489,7 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
                         new ExecutionAttemptMappingProvider(getAllExecutionVertices()),
                         checkpointStatsTracker);
 
+        // 在checkpointCoordinator 内注册一些hook
         // register the master hooks on the checkpoint coordinator
         for (MasterTriggerRestoreHook<?> hook : masterHooks) {
             if (!checkpointCoordinator.addMasterHook(hook)) {
@@ -478,10 +502,13 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
         if (checkpointCoordinator.isPeriodicCheckpointingConfigured()) {
             // the periodic checkpoint scheduler is activated and deactivated as a result of
             // job status changes (running -> on, all other states -> off)
+            // 添加作业状态监听器
             registerJobStatusListener(checkpointCoordinator.createActivatorDeactivator());
         }
 
+        // 状态后端类名
         this.stateBackendName = checkpointStateBackend.getClass().getSimpleName();
+        // 状态存储类名
         this.checkpointStorageName = checkpointStorage.getClass().getSimpleName();
     }
 
@@ -523,9 +550,15 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
         }
     }
 
+    /**
+     * 获取整个executiongraph 下每个节点的CheckpointContext 集合
+     *
+     * @return
+     */
     private Collection<OperatorCoordinatorCheckpointContext>
-            buildOpCoordinatorCheckpointContexts() {
+    buildOpCoordinatorCheckpointContexts() {
         final ArrayList<OperatorCoordinatorCheckpointContext> contexts = new ArrayList<>();
+        // JobVertex 循环执行
         for (final ExecutionJobVertex vertex : verticesInCreationOrder) {
             contexts.addAll(vertex.getOperatorCoordinators());
         }
@@ -862,7 +895,9 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
                 throw new JobException(
                         String.format(
                                 "Encountered two intermediate data set with ID %s : previous=[%s] / new=[%s]",
-                                res.getId(), res, previousDataSet));
+                                res.getId(),
+                                res,
+                                previousDataSet));
             }
         }
 
@@ -1014,11 +1049,13 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
         }
     }
 
+    // 如果执行仍在运行，则失败全局
     void failGlobalIfExecutionIsStillRunning(Throwable cause, ExecutionAttemptID failingAttempt) {
         final Execution failedExecution = currentExecutions.get(failingAttempt);
         if (failedExecution != null
                 && (failedExecution.getState() == ExecutionState.RUNNING
-                        || failedExecution.getState() == ExecutionState.INITIALIZING)) {
+                || failedExecution.getState() == ExecutionState.INITIALIZING)) {
+            // 核心调用failGlobal
             failGlobal(cause);
         } else {
             LOG.debug(
@@ -1031,6 +1068,7 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
     @Override
     public void failGlobal(Throwable t) {
         checkState(internalTaskFailuresListener != null);
+        // internalTaskFailuresListener 通知异常
         internalTaskFailuresListener.notifyGlobalFailure(t);
     }
 
@@ -1088,6 +1126,7 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
     private boolean transitionState(JobStatus current, JobStatus newState, Throwable error) {
         assertRunningInJobMasterMainThread();
         // consistency check
+        // 状态检查
         if (current.isTerminalState()) {
             String message = "Job is trying to leave terminal state " + current;
             LOG.error(message);
@@ -1096,7 +1135,10 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
 
         // now do the actual state transition
         if (state == current) {
+            // 检查是否是同一个对象
             state = newState;
+            // 2023-05-09 07:45:08,207 INFO  [FRAMEWORK] [stp-job-80-755-online] [] - - - - - org.apache.flink.runtime.executiongraph.ExecutionGraph
+            // [] [ExecutionGraph.java:1317] - Job stp-job-80-755-online (00000000000000000000000000000000) switched from state CREATED to RUNNING.
             LOG.info(
                     "Job {} ({}) switched from state {} to {}.",
                     getJobName(),
@@ -1106,6 +1148,7 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
                     error);
 
             stateTimestamps[newState.ordinal()] = System.currentTimeMillis();
+            // job状态监听器执行
             notifyJobStatusChange(newState);
             return true;
         } else {
@@ -1396,8 +1439,9 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
      * <p>This method never throws an exception!
      *
      * @param state The task execution state from which to deserialize the accumulators.
+     *
      * @return The deserialized accumulators, of null, if there are no accumulators or an error
-     *     occurred.
+     *         occurred.
      */
     private Map<String, Accumulator<?, ?>> deserializeAccumulators(
             TaskExecutionStateTransition state) {

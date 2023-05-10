@@ -45,6 +45,9 @@ public class CheckpointCoordinatorConfiguration implements Serializable {
 
     private final int maxConcurrentCheckpoints;
 
+    /**
+     * 可容忍checkpoint失败数
+     */
     private final int tolerableCheckpointFailureNumber;
 
     /** Settings for what to do with checkpoints when a job finishes. */

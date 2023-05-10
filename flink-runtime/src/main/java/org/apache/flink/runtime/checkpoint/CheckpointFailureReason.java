@@ -20,6 +20,7 @@ package org.apache.flink.runtime.checkpoint;
 
 /** Various reasons why a checkpoint was failure. */
 public enum CheckpointFailureReason {
+
     PERIODIC_SCHEDULER_SHUTDOWN(true, "Periodic checkpoint scheduler is shut down."),
 
     TOO_MANY_CONCURRENT_CHECKPOINTS(
@@ -39,6 +40,9 @@ public enum CheckpointFailureReason {
 
     CHECKPOINT_ASYNC_EXCEPTION(false, "Asynchronous task checkpoint failed."),
 
+    /**
+     * checkpoint 过期.
+     */
     CHECKPOINT_EXPIRED(false, "Checkpoint expired before completing."),
 
     CHECKPOINT_SUBSUMED(false, "Checkpoint has been subsumed."),
@@ -99,7 +103,7 @@ public enum CheckpointFailureReason {
 
     /**
      * @return true if this value indicates a failure reason happening before a checkpoint is passed
-     *     to a job's tasks.
+     *         to a job's tasks.
      */
     public boolean isPreFlight() {
         return preFlight;
